@@ -1,0 +1,13 @@
+Luasynth - A Lua-based DSL for describing sounds and one-dimensional signals.
+
+Luasynth allows you to easily describe and compose waveforms using only a
+text editor. A domain-specific language built with Lua operator overloading
+is run by a simple framework that handles caching and optimization.
+
+Features include:
+- reloader for real-time updating of playing sounds
+- generating sounds from arbitrary Lua code
+
+Dependencies:
+- Linux (ALSA, pthreads)
+- LuaJIT or Lua 5.1
