@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <pthread.h>
 
 #include <alloca.h>
 
@@ -15,9 +16,9 @@
 #include <sys/types.h>
 #include <sys/inotify.h>
 
-#include <lua.h>
-#include <lauxlib.h>
-#include <lualib.h>
+#include </usr/include/lua5.1/lua.h>
+#include </usr/include/lua5.1/lauxlib.h>
+#include </usr/include/lua5.1/lualib.h>
 
 lua_State *L = NULL;
 lua_State *last_L = NULL;
@@ -27,14 +28,27 @@ const char *_filename;
 int inotify_fd;
 size_t bufsiz;
 struct inotify_event *event;
-struct timeval timeout = { .tv_sec = 0, .tv_usec = 0 };
+struct timeval timeouts= { .tv_sec = 0, .tv_usec = 0 };
+
+int16_t* buffer;
 
 int reload_script(const char *filename);
 void setup_reload(const char *filename);
 double get_sample(double time, double angle);
 
-int main(int argc, char **argv) {
+/* Thread functions and data*/
+typedef struct sample_data {
+    unsigned int period;
+	snd_pcm_uframes_t frames;
+    int rc;
 	snd_pcm_t *handle;
+} sample_data;
+
+
+void play_sample(sample_data* sd);
+
+int main(int argc, char **argv) {
+	//snd_pcm_t *handle;
 	int dir;
 
 	if (argc == 2) {
@@ -45,47 +59,66 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
-	int rc = snd_pcm_open(&handle, "default", SND_PCM_STREAM_PLAYBACK, 0);
-	if (rc < 0) {
-		fprintf(stderr, "unable to open pcm device: %s\n", snd_strerror(rc));
+    sample_data* sd = (sample_data*) malloc(sizeof(sample_data));
+
+	//int rc = snd_pcm_open(&handle, "default", SND_PCM_STREAM_PLAYBACK, 0);
+	//int rc = snd_pcm_open(&handle, "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+    sd->rc = snd_pcm_open(&(sd->handle), "default", SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+
+	if (sd->rc < 0) {
+		fprintf(stderr, "unable to open pcm device: %s\n", snd_strerror(sd->rc));
 		abort();
 	}
 
 	snd_pcm_hw_params_t *params;
 	snd_pcm_hw_params_alloca(&params);
-	snd_pcm_hw_params_any(handle, params);
+	snd_pcm_hw_params_any(sd->handle, params);
 
-	snd_pcm_hw_params_set_access(handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
-	snd_pcm_hw_params_set_format(handle, params, SND_PCM_FORMAT_S16_LE);
-	snd_pcm_hw_params_set_channels(handle, params, 2);
+	snd_pcm_hw_params_set_access(sd->handle, params, SND_PCM_ACCESS_RW_INTERLEAVED);
+	snd_pcm_hw_params_set_format(sd->handle, params, SND_PCM_FORMAT_S16_LE);
+	snd_pcm_hw_params_set_channels(sd->handle, params, 2);
 
 	unsigned int rate = 44100;
-	snd_pcm_hw_params_set_rate_near(handle, params, &rate, &dir);
+	snd_pcm_hw_params_set_rate_near(sd->handle, params, &rate, &dir);
 
-	snd_pcm_uframes_t frames = 32;
-	snd_pcm_hw_params_set_period_size_near(handle, params, &frames, &dir);
+	sd->frames = 32;
+	snd_pcm_hw_params_set_period_size_near(sd->handle, params, &(sd->frames), &dir);
 
-	rc = snd_pcm_hw_params(handle, params);
-	if (rc < 0) {
-		fprintf(stderr, "unable to set hw parameters: %s\n", snd_strerror(rc));
+	sd->rc = snd_pcm_hw_params(sd->handle, params);
+	if (sd->rc < 0) {
+		fprintf(stderr, "unable to set hw parameters: %s\n", snd_strerror(sd->rc));
 		abort();
 	}
 
-	snd_pcm_hw_params_get_period_size(params, &frames, &dir);
-	int16_t *buffer = malloc(frames * 2 * sizeof(uint16_t));
+	snd_pcm_hw_params_get_period_size(params, &(sd->frames), &dir);
+	//int16_t *buffer = malloc(frames * 2 * sizeof(uint16_t));
+	buffer = malloc((sd->frames) * 2 * sizeof(uint16_t));
 
-	unsigned int period;
-	snd_pcm_hw_params_get_period_time(params, &period, &dir);
+	//unsigned int period;
+	snd_pcm_hw_params_get_period_time(params, &(sd->period), &dir);
 
-	for (uint64_t time = 0;; time += period) {
+    pthread_t sample_th;
+    pthread_create(&sample_th, NULL, play_sample, sd);
+    pthread_join(sample_th, NULL);
 
-		for (size_t j = 0; j < frames * 2; j++) {
+	snd_pcm_drain(sd->handle);
+	snd_pcm_close(sd->handle);
+	free(buffer);
+
+	return 0;
+}
+
+//period, frames, rc, handle,
+void play_sample(sample_data* sd) {
+	for (uint64_t time = 0;; time += sd->period) {
+		for (size_t j = 0; j < sd->frames * 2; j++) {
+
 			double sample;
 			if (j & 0x1) {
-				sample = get_sample((time + ((j >> 1) * period / frames)) / 1000000.0, 0.0);
+				sample = get_sample((time + ((j >> 1) * sd->period / sd->frames)) / 1000000.0, 0.0);
 			}
 			else {
-				sample = get_sample((time + ((j >> 1) * period / frames)) / 1000000.0, 3.14159265);
+				sample = get_sample((time + ((j >> 1) * sd->period / sd->frames)) / 1000000.0, 3.14159265);
 			}
 
 			sample = (sample * 32768.0f);
@@ -96,18 +129,12 @@ int main(int argc, char **argv) {
 			buffer[j] = sample32;
 		}
 
-		rc = snd_pcm_writei(handle, buffer, frames);
+		sd->rc = snd_pcm_writei(sd->handle, buffer, sd->frames);
 
-		if (rc == -EPIPE) {
-			snd_pcm_prepare(handle);
+		if (sd->rc == -EPIPE) {
+			snd_pcm_prepare(sd->handle);
 		}
 	}
-
-	snd_pcm_drain(handle);
-	snd_pcm_close(handle);
-	free(buffer);
-
-	return 0;
 }
 
 int reload_script(const char *filename) {
@@ -154,12 +181,11 @@ void setup_reload(const char *filename) {
 }
 
 double get_sample(double time, double angle) {
-
 	fd_set rfds;
 	FD_ZERO(&rfds);
 	FD_SET(inotify_fd, &rfds);
 
-	if (select(inotify_fd + 1, &rfds, NULL, NULL, &timeout)) {
+	if (select(inotify_fd + 1, &rfds, NULL, NULL, &timeouts)) {
 		read(inotify_fd, event, bufsiz);
 		inotify_add_watch(inotify_fd, _filename, IN_MODIFY);
 		reload_script(_filename);

@@ -3,11 +3,12 @@ OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 
 CFLAGS := -Wall -Wextra -std=c99
 CFLAGS += -O3 -fomit-frame-pointer -pipe
+LDFLAGS += -lasound -lluajit-5.1 -lncurses -lpthread
 
 .PHONY: clean
 
 luasynth: $(OBJECTS)
-	$(CC) $(CFLAGS) $(OBJECTS) -lasound -lluajit-5.1 -o $@
+	$(CC) $(CFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $<
