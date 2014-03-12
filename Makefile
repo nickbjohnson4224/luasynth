@@ -1,4 +1,5 @@
-SOURCES := luasynth.c
+SOURCES := luasynth.c player.c
+DEPS := state.h
 OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 
 CFLAGS := -Wall -Wextra -std=c99
@@ -10,7 +11,7 @@ LDFLAGS += -lasound -lluajit-5.1 -lncurses -lpthread
 luasynth: $(OBJECTS)
 	$(CC) $(CFLAGS) $(OBJECTS) $(LDFLAGS) -o $@
 
-%.o: %.c
+%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c $<
 
 clean:

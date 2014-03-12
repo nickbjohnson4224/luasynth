@@ -4,6 +4,8 @@
 #include <math.h>
 #include <pthread.h>
 
+#include "player_state.h"
+
 #include <alloca.h>
 
 #define _POSIX_C_SOURCE
@@ -44,12 +46,16 @@ typedef struct sample_data {
 	snd_pcm_t *handle;
 } sample_data;
 
-
 void play_sample(sample_data* sd);
+void pause_sample(sample_data* sd);
 
 int main(int argc, char **argv) {
 	//snd_pcm_t *handle;
 	int dir;
+
+    paused = 0;
+    pause_flag = 0;
+    quit = 0;
 
 	if (argc == 2) {
 		setup_reload(argv[1]);
@@ -97,23 +103,37 @@ int main(int argc, char **argv) {
 	//unsigned int period;
 	snd_pcm_hw_params_get_period_time(params, &(sd->period), &dir);
 
-    pthread_t sample_th;
+    //ncurses player and get samples
+    pthread_t sample_th, player_th, pauser_th;
     pthread_create(&sample_th, NULL, play_sample, sd);
-    pthread_join(sample_th, NULL);
+    pthread_create(&pauser_th, NULL, pause_sample, sd);
+    pthread_create(&player_th, NULL, player, NULL);
 
+    pthread_join(sample_th, NULL);
+    pthread_join(pauser_th, NULL);
+
+    pthread_exit(NULL);
 	snd_pcm_drain(sd->handle);
 	snd_pcm_close(sd->handle);
 	free(buffer);
+    free(sd);
 
 	return 0;
 }
 
-//period, frames, rc, handle,
+void pause_sample(sample_data* sd) {
+    while(!quit) {
+        pthread_mutex_lock(&pause_tex);
+        snd_pcm_pause(sd->handle, paused);
+        pthread_mutex_unlock(&pause_tex);
+    }
+}
+
 void play_sample(sample_data* sd) {
 	for (uint64_t time = 0;; time += sd->period) {
 		for (size_t j = 0; j < sd->frames * 2; j++) {
-
 			double sample;
+
 			if (j & 0x1) {
 				sample = get_sample((time + ((j >> 1) * sd->period / sd->frames)) / 1000000.0, 0.0);
 			}
@@ -134,6 +154,8 @@ void play_sample(sample_data* sd) {
 		if (sd->rc == -EPIPE) {
 			snd_pcm_prepare(sd->handle);
 		}
+
+        if(quit) break;
 	}
 }
 
@@ -185,6 +207,7 @@ double get_sample(double time, double angle) {
 	FD_ZERO(&rfds);
 	FD_SET(inotify_fd, &rfds);
 
+    //TODO: thread the script reloading
 	if (select(inotify_fd + 1, &rfds, NULL, NULL, &timeouts)) {
 		read(inotify_fd, event, bufsiz);
 		inotify_add_watch(inotify_fd, _filename, IN_MODIFY);
